@@ -1,0 +1,152 @@
+on:
+  workflow_call:
+    inputs:
+      windows-only:
+        type: boolean
+        required: false
+        default: false
+      dotnet-version:
+        type: string
+        required: true
+      dotnet-test-logger:
+        type: string
+        required: false
+        default: GitHubActions
+      deploy-on-failed-tests:
+        type: boolean
+        required: false
+        default: false
+
+    secrets:
+      CODECOV_TOKEN:
+        required: false
+      NUGET_TOKEN:
+        required: true
+      DISCORD_WEBHOOK:
+        required: false
+
+jobs:
+  test:
+    # Explicit name is required due to the matrix hack below
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+
+    env:
+      TERM: xterm
+      DOTNET_SYSTEM_CONSOLE_ALLOW_ANSI_COLOR_REDIRECTION: true
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+      DOTNET_NOLOGO: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+      # Secrets can't be referenced in conditionals, but environment variables can.
+      # https://github.com/github/docs/issues/6861#issuecomment-870757186
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Below is a hacky way to implement a conditional matrix
+        windows-only:
+          - ${{ inputs.windows-only }}
+        exclude:
+          - windows-only: true
+            os: "ubuntu-latest"
+          - windows-only: true
+            os: "macos-latest"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install .NET
+        uses: actions/setup-dotnet@v2
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+
+      - name: Run tests
+        run: dotnet test --configuration Release --logger ${{ inputs.dotnet-test-logger }} --blame-crash --collect:"XPlat Code Coverage" -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
+
+      - name: Upload coverage
+        if: ${{ env.CODECOV_TOKEN }}
+        uses: codecov/codecov-action@v3
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  publish:
+    needs: test
+    runs-on: windows-latest
+
+    env:
+      TERM: xterm
+      DOTNET_SYSTEM_CONSOLE_ALLOW_ANSI_COLOR_REDIRECTION: true
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+      DOTNET_NOLOGO: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install .NET
+        uses: actions/setup-dotnet@v2
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+
+      - name: Create packages
+        run: dotnet pack --configuration Release
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: packages
+          path: "**/*.nupkg"
+
+  deploy:
+    if: ${{ github.event_name == 'push' && github.ref_type == 'tag' && (success() || inputs.deploy-on-failed-tests) }}
+    needs: publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install .NET
+        uses: actions/setup-dotnet@v2
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: packages
+
+      - name: Push packages
+        run: dotnet nuget push **/*.nupkg -s "https://api.nuget.org/v3/index.json" -k ${{ secrets.NUGET_TOKEN }}
+
+  notify:
+    needs: deploy
+    runs-on: ubuntu-latest
+
+    env:
+      # Secrets can't be referenced in conditionals, but environment variables can.
+      # https://github.com/github/docs/issues/6861#issuecomment-870757186
+      DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+
+    steps:
+      - name: Get release version
+        id: get-version
+        uses: dawidd6/action-get-tag@v1
+
+      - name: Notify Discord
+        if: ${{ env.DISCORD_WEBHOOK }}
+        uses: satak/webrequest-action@v1.2.4
+        with:
+          url: ${{ secrets.DISCORD_WEBHOOK }}
+          method: POST
+          headers: |
+            {
+              "Content-Type": "application/json; charset=UTF-8"
+            }
+          payload: |
+            {
+              "content": "**${{ github.event.repository.name }}** new version released!\nVersion: `${{ steps.get-version.outputs.tag }}`\nChangelog: <https://github.com/${{ github.event.repository.full_name }}/blob/${{ steps.get-version.outputs.tag }}/Changelog.md>"
+            }
+
