@@ -1,0 +1,46 @@
+name: nuget
+on:
+  workflow_call:
+    inputs:
+      project-name:
+        type: string
+        required: true
+      dotnet-version:
+        type: string
+        required: true
+      run-tests:
+        type: boolean
+        required: false
+        default: false
+env:
+  github-user: 'sandreas'
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Setup dotnet
+        uses: actions/setup-dotnet@v2
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+
+      - name: Get version
+        id: version
+        uses: battila7/get-version-action@v2
+
+      - name: Build
+        run: dotnet build --configuration Release /p:Version=${{ steps.version.outputs.version-without-v }}
+
+      - name: Test
+        if: ${{ inputs.run-tests }}
+        run: dotnet test --configuration Release /p:Version=${{ steps.version.outputs.version-without-v }} --no-build
+
+      - name: Pack
+        run: dotnet pack --configuration Release --include-symbols /p:Version=${{ steps.version.outputs.version-without-v }} --no-build --output .
+
+      - name: Push
+        run: |
+          dotnet nuget push ${{ inputs.project-name }}.${{ steps.version.outputs.version-without-v }}.nupkg --source https://nuget.pkg.github.com/${{ env.github-user }}/index.json --api-key ${{ secrets.GITHUB_TOKEN }} && dotnet nuget push ${{ inputs.project-name }}.${{ steps.version.outputs.version-without-v }}.nupkg --source https://api.nuget.org/v3/index.json --api-key ${{secrets.NUGET_API_KEY}}           
