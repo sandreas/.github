@@ -20,13 +20,10 @@ on:
         type: boolean
         required: false
         default: false
-#     secrets:
-#       CODECOV_TOKEN:
-#         required: false
-#       NUGET_TOKEN:
-#         required: true
-#       DISCORD_WEBHOOK:
-#         required: false
+    secrets:
+      NUGET_API_KEY:
+       required: false
+       default: ${{ secrets.NUGET_API_KEY }}
 
 env:
   github-user: 'sandreas'
