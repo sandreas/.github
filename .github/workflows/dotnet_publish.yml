@@ -21,7 +21,8 @@ on:
         required: false
         default: false
     secrets:
-      NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+      NUGET_API_KEY:
+        required: false
 
 env:
   github-user: 'sandreas'
